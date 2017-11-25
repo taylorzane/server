@@ -41,6 +41,11 @@ const stats = {
 // handle proxying a request to a client
 // will wait for a tunnel socket to become available
 function maybe_bounce(req, res, sock, head, opt) {
+    // compatibility with Let's Encrypt
+    if (req.url.match('well-known')) {
+        return false
+    }
+
     // without a hostname, we won't know who the request is for
     const hostname = req.headers.host;
     if (!hostname) {
@@ -48,9 +53,9 @@ function maybe_bounce(req, res, sock, head, opt) {
     }
 
     let subdomain = tldjs.getSubdomain(hostname);
-    
-    if (subdomain && opt.subHost) {        
-        const subHost = opt.subHost.reduce((found, sub) => {                        
+
+    if (subdomain && opt.subHost) {
+        const subHost = opt.subHost.reduce((found, sub) => {
             return found
                 || (subdomain.slice(-sub.length) == sub ? sub : '')
         }, '')
@@ -58,15 +63,15 @@ function maybe_bounce(req, res, sock, head, opt) {
             ? subdomain.slice(0, -(subHost.length + 1))
             : subdomain
     }
-    
+
     if (!subdomain) {
         return false;
     }
 
-    const client = clients[subdomain];    
+    const client = clients[subdomain];
 
     // no such subdomain
-    // we use 502 error to the client to signify we can't service the request    
+    // we use 502 error to the client to signify we can't service the request
     if (!client) {
         if (res) {
             res.statusCode = 502;
@@ -79,7 +84,7 @@ function maybe_bounce(req, res, sock, head, opt) {
 
         return true;
     }
-    
+
     let finished = false;
     if (sock) {
         sock.once('end', function() {
@@ -240,11 +245,13 @@ module.exports = function(opt) {
 
     const app = express();
 
+    app.get('/.well-known', express.static('./.well-known', { dotfiles:'allow' }))
+
     app.get('/', function(req, res, next) {
         if (req.query['new'] === undefined) {
             return next();
         }
-        
+
         const req_id = rand_id();
         debug('making new client with id %s', req_id);
         new_client(req_id, opt, function(err, info) {
@@ -288,19 +295,22 @@ module.exports = function(opt) {
             err.statusCode = 403;
             return next(err);
         }
-        
+
         debug('making new client with id %s', req_id);
-        new_client(req_id, opt, function(err, info) {            
+        new_client(req_id, opt, function(err, info) {
             if (err) {
                 return next(err);
             }
-            
+
             const url = schema + '://' + req_id + '.' + req.headers.host;
             info.url = url;
             res.json(info);
         });
 
     });
+
+    // Compatibility with Let's Encrypt
+    app.get('/*', express.static('static', { dotfiles: 'allow' }))
 
     app.use(function(err, req, res, next) {
         const status = err.statusCode || err.status || 500;
